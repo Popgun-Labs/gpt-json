@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from tiktoken import encoding_for_model
 from typing import Any
 
-from gpt_json.models import GPTMessage, GPTModelVersion, ResponseType, FixTransforms
+from gpt_json.models import GPTMessage, GPTModelVersion, ResponseType, FixTransforms, GPTCompletionModelVersion
 from gpt_json.parsers import find_json_response
 from gpt_json.transformations import fix_truncated_json, fix_bools
 from gpt_json.prompts import generate_schema_prompt
@@ -19,6 +19,7 @@ from gpt_json.prompts import generate_schema_prompt
 import logging
 
 logger = logging.getLogger('my_logger')
+# logger.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
@@ -46,7 +47,7 @@ class GPTJSON(Generic[SchemaType]):
     def __init__(
         self,
         api_key: str | None = None,
-        model: GPTModelVersion | str = GPTModelVersion.GPT_4,
+        model: GPTModelVersion | str = GPTModelVersion.GPT_4_0341,
         auto_trim: bool = False,
         auto_trim_response_overhead: int = 0,
         # For messages that are relatively deterministic
@@ -73,6 +74,8 @@ class GPTJSON(Generic[SchemaType]):
         self.timeout = timeout
         self.openai_max_retries = openai_max_retries
         self.openai_arguments = kwargs
+        self.use_completion_model = True if self.model in [v.value for v in GPTCompletionModelVersion] else False
+
 
         if not self.schema_model:
             raise ValueError("GPTJSON needs to be instantiated with a schema model, like GPTJSON[MySchema](...args).")
@@ -89,6 +92,10 @@ class GPTJSON(Generic[SchemaType]):
                 self.max_tokens = 8192 - auto_trim_response_overhead
             elif "gpt-3.5" in self.model:
                 self.max_tokens = 4096 - auto_trim_response_overhead
+            elif self.model in [GPTModelVersion.GPT_3_5_DAVINCI_002.value, GPTModelVersion.GPT_3_5_DAVINCI_003.value]:
+                self.max_tokens = 4097 - auto_trim_response_overhead
+            elif self.model in [GPTModelVersion.GPT_3_CURIE_001.value, GPTModelVersion.GPT_3_BABBAGE_001.value, GPTModelVersion.GPT_3_ADA_001]:
+                self.max_tokens = 2049 - auto_trim_response_overhead
             else:
                 raise ValueError("Unknown model to infer max tokens, see https://platform.openai.com/docs/models/gpt-4 for more information on token length.")
 
@@ -155,7 +162,10 @@ class GPTJSON(Generic[SchemaType]):
             logger.warning("No choices available, should report error...")
             return None
 
-        full_response = choices[0]["message"]["content"]
+        if self.use_completion_model:
+            full_response = choices[0]["text"]
+        else:
+            full_response = choices[0]["message"]["content"]
 
         extracted_response = find_json_response(full_response, extract_type)
         if extracted_response is None:
@@ -194,6 +204,18 @@ class GPTJSON(Generic[SchemaType]):
 
         if max_response_tokens:
             optional_parameters["max_tokens"] = max_response_tokens
+
+
+        if self.use_completion_model:
+            return await openai.Completion.acreate(
+                model=self.model,
+                prompt="\n".join([message.content for message in messages]),
+                temperature=self.temperature,
+                timeout=self.timeout,
+                api_key=self.api_key,
+                **optional_parameters,
+                **self.openai_arguments,
+            )
 
         return await openai.ChatCompletion.acreate(
             model=self.model,
