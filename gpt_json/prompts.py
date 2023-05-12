@@ -1,4 +1,5 @@
-from types import UnionType
+from __future__ import annotations
+
 from typing import List, get_args, get_origin
 
 from pydantic import BaseModel
@@ -19,8 +20,6 @@ def generate_schema_prompt(schema: BaseModel | list[BaseModel]) -> str:
 
             if annotation_origin in {list, List}:
                 payload.append(f'"{key}": {annotation_arguments[0].__name__}[]')
-            elif annotation_origin == UnionType:
-                payload.append(f'"{key}": {" | ".join([arg.__name__.lower() for arg in annotation_arguments])}')
             elif issubclass(value.type_, BaseModel):
                 payload.append(f'"{key}": {generate_payload(value.type_)}')
             else:

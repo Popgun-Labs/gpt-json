@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import replace
 from json import loads as json_loads
 from json.decoder import JSONDecodeError
